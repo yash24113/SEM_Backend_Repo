@@ -138,7 +138,7 @@ router.post('/register', [
   }
 });
 
-// Login user (OTP required)
+// Login user (OTP or 2FA required)
 router.post('/login', [
   body('email').isEmail().withMessage('Please enter a valid email'),
   body('password').notEmpty().withMessage('Password is required')
@@ -170,7 +170,6 @@ router.post('/login', [
 
     // If not verified, request registration verification via OTP first
     if (!user.isVerified) {
-      // Send register-type OTP to complete email verification
       const otp = generateOTP();
       await sendOTPEmail(email, otp);
       storeOTP(email, otp, 'register');
@@ -182,11 +181,19 @@ router.post('/login', [
       });
     }
 
-    // For verified users, send login OTP
+    // If 2FA is enabled, do not send OTP, just return user info for 2FA modal
+    if (user.profile.twoFAEnabled) {
+      return res.json({
+        message: '2FA enabled',
+        user: user.getPublicProfile(),
+        requires2FA: true
+      });
+    }
+
+    // For verified users without 2FA, send login OTP
     const otp = generateOTP();
     await sendOTPEmail(email, otp);
     storeOTP(email, otp, 'login');
-
     return res.json({
       message: 'OTP sent to your email',
       email,

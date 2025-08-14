@@ -48,19 +48,23 @@ const sendAlertEmail = async ({ to, subject, message, data }) => {
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
         <h2 style="color:#333;">${subject}</h2>
-        <p style="color:#444;">${message}</p>
-        ${data ? `
-        <table style="border-collapse: collapse; width: 100%; margin-top:12px;">
-          <tbody>
-            ${Object.entries(data).map(([k,v]) => `
-              <tr>
-                <td style="border:1px solid #eee;padding:8px;">${k}</td>
-                <td style="border:1px solid #eee;padding:8px;">${v}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>` : ''}
-        <p style="color:#999; font-size:12px;">This notification was generated automatically.</p>
+        <p style="color:#666;">${message}</p>
+        ${
+          data
+            ? `<div style="margin-top:20px;padding:15px;background:#f5f5f5;border-radius:5px;">
+                 <h3 style="margin-top:0;">Alert Details:</h3>
+                 ${Object.entries(data)
+                   .map(
+                     ([key, value]) =>
+                       `<p style="margin:5px 0;"><strong>${key}:</strong> ${value}</p>`
+                   )
+                   .join('')}
+               </div>`
+            : ''
+        }
+        <p style="margin-top:30px;color:#999;font-size:12px;">
+          This is an automated message. Please do not reply to this email.
+        </p>
       </div>
     `,
   };
@@ -69,9 +73,41 @@ const sendAlertEmail = async ({ to, subject, message, data }) => {
     await transporter.sendMail(mailOptions);
     return true;
   } catch (error) {
-    console.error('Alert email sending error:', error);
+    console.error('Failed to send alert email:', error);
     return false;
   }
 };
 
-module.exports = { sendOTP, sendAlertEmail };
+// Generic email sending function with attachment support
+const sendEmail = async ({ to, subject, text, html, attachments }) => {
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to,
+    subject,
+    text,
+    html,
+    attachments: attachments || []
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Email sent:', info.messageId);
+    return { success: true, messageId: info.messageId };
+  } catch (error) {
+    console.error('Failed to send email:', error);
+    return { 
+      success: false, 
+      error: error.message,
+      code: error.code,
+      response: error.response,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    };
+  }
+};
+
+module.exports = { 
+  sendOTP, 
+  sendAlertEmail, 
+  sendEmail,
+  transporter 
+};

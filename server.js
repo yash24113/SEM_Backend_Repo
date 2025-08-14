@@ -14,17 +14,57 @@ const io = socketIo(server, {
   }
 });
 
+
+// const allowedOrigins = process.env.CLIENT_URL
+//   .split(",") // Split comma-separated URLs
+//   .map(url => url.trim()); // Remove spaces
+
+// const io = socketIo(server, {
+//   cors: {
+//     origin: (origin, callback) => {
+//       if (!origin || allowedOrigins.includes(origin)) {
+//         callback(null, true); // Allow
+//       } else {
+//         callback(new Error("Not allowed by CORS")); // Block
+//       }
+//     },
+//     methods: ["GET", "POST"]
+//   }
+// });
+
+
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || "localhost";
 
-// MongoDB connection
-mongoose
-  .connect(process.env.MONGODB_URL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("MongoDB connected"))
-  .catch((err) => console.error("MongoDB connection error:", err));
+// MongoDB connection with retry and safe startup
+mongoose.set('strictQuery', true);
+const MONGO_URL = process.env.MONGODB_URL || 'mongodb://127.0.0.1:27017/smart-environment-monitor';
+let serverStarted = false;
+
+async function connectWithRetry() {
+  try {
+    console.log(`Connecting to MongoDB: ${MONGO_URL}`);
+    await mongoose.connect(MONGO_URL, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected');
+    if (!serverStarted) {
+      startHttpServer();
+      serverStarted = true;
+    }
+  } catch (err) {
+    console.error('MongoDB connection error:', err?.message || err);
+    setTimeout(connectWithRetry, 5000);
+  }
+}
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB disconnected. Retrying connection...');
+  connectWithRetry();
+});
+
+connectWithRetry();
 
 // Make io available to routes
 app.set('io', io);
@@ -33,6 +73,10 @@ app.set('io', io);
 const authRoutes = require("./routes/auth");
 const environmentRoutes = require("./routes/environment");
 const profileRoutes = require("./routes/profile");
+const profile2faRoutes = require("./routes/profile-2fa");
+const auth2faRoutes = require("./routes/auth-2fa");
+const systemRoutes = require("./routes/system");
+const alertRoutes = require("./routes/alerts");
 
 // Middleware
 app.use(cors({
@@ -49,6 +93,10 @@ app.use('/uploads', express.static('uploads'));
 app.use("/api/auth", authRoutes);
 app.use("/api/environment", environmentRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/profile", profile2faRoutes);
+app.use("/api/auth", auth2faRoutes);
+app.use("/api/system", systemRoutes);
+app.use("/api/alerts", alertRoutes);
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
@@ -57,6 +105,14 @@ io.on('connection', (socket) => {
   socket.on('join-dashboard', () => {
     socket.join('dashboard');
     console.log('Client joined dashboard room');
+  });
+
+  // Agent registration to enable targeted commands
+  socket.on('register-device', (deviceId) => {
+    if (deviceId) {
+      socket.join(`device:${deviceId}`);
+      console.log(`Device registered: ${deviceId} (${socket.id})`);
+    }
   });
 
   socket.on('disconnect', () => {
@@ -89,8 +145,9 @@ app.use((req, res) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Start Server
-server.listen(PORT, () => {
-  console.log(`Server running at http://${HOST}:${PORT}`);
-  console.log(`Socket.IO server is ready`);
-});
+function startHttpServer() {
+  server.listen(PORT, () => {
+    console.log(`Server running at http://${HOST}:${PORT}`);
+    console.log(`Socket.IO server is ready`);
+  });
+}

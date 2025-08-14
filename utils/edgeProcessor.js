@@ -146,3 +146,74 @@ module.exports = {
 };
 
 
+// ---- System Metrics Edge Rules ----
+const systemLastAlertMap = new Map();
+
+const HOURS = (h) => h * 60 * 60 * 1000;
+
+function evaluateSystemMetrics(data) {
+  const alerts = [];
+  const deviceId = data.deviceId || 'laptop';
+
+  // Battery below 85%
+  if (typeof data.batteryPercent === 'number' && data.batteryPercent < 85) {
+    alerts.push({
+      key: 'batteryLow85',
+      metric: 'batteryPercent',
+      level: 'warning',
+      message: `Battery low: ${data.batteryPercent}% (< 85%)`,
+      value: data.batteryPercent,
+      threshold: 85,
+      deviceId,
+    });
+  }
+
+  // CPU usage time above 5 hours (uptime used as proxy when cpu > 70%)
+  if (typeof data.cpuLoadPercent === 'number' && data.cpuLoadPercent > 70 && typeof data.uptimeSeconds === 'number' && data.uptimeSeconds * 1000 > HOURS(5)) {
+    alerts.push({
+      key: 'cpuHigh5h',
+      metric: 'cpuLoadPercent',
+      level: 'warning',
+      message: `High CPU for long duration: ${data.cpuLoadPercent}% for > 5h`,
+      value: data.cpuLoadPercent,
+      threshold: '70% & >5h',
+      deviceId,
+    });
+  }
+
+  // Volume above 90%
+  if (typeof data.volumePercent === 'number' && data.volumePercent > 90) {
+    alerts.push({
+      key: 'volumeHigh90',
+      metric: 'volumePercent',
+      level: 'warning',
+      message: `System volume high: ${data.volumePercent}% (> 90%)`,
+      value: data.volumePercent,
+      threshold: 90,
+      deviceId,
+    });
+  }
+
+  return alerts;
+}
+
+function systemShouldNotify(deviceId, key) {
+  const cooldownMs = HOURS(1); // 1 hour cooldown per alert type
+  const mapKey = `${deviceId || 'unknown'}:${key}`;
+  const last = systemLastAlertMap.get(mapKey) || 0;
+  const now = Date.now();
+  if (now - last >= cooldownMs) {
+    systemLastAlertMap.set(mapKey, now);
+    return true;
+  }
+  return false;
+}
+
+function evaluateAndFilterSystem(data) {
+  const alerts = evaluateSystemMetrics(data);
+  return alerts.filter(a => systemShouldNotify(a.deviceId, a.key));
+}
+
+module.exports.evaluateSystemMetrics = evaluateSystemMetrics;
+module.exports.evaluateAndFilterSystem = evaluateAndFilterSystem;
+

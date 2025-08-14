@@ -51,6 +51,53 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+// Middleware to check if 2FA is required
+const require2FA = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    req.currentUser = user; // Store user in request for later use
+    
+    // If 2FA is not enabled, skip verification
+    if (!user.profile?.twoFAEnabled) {
+      return next();
+    }
+
+    // Check if 2FA code is provided and valid
+    const { twoFACode } = req.body;
+    if (!twoFACode) {
+      return res.status(400).json({ 
+        requires2FA: true,
+        message: '2FA verification code is required' 
+      });
+    }
+
+    // Verify 2FA code
+    const speakeasy = require('speakeasy');
+    const verified = speakeasy.totp.verify({
+      secret: user.profile.twoFASecret,
+      encoding: 'base32',
+      token: twoFACode,
+      window: 1
+    });
+
+    if (!verified) {
+      return res.status(400).json({ 
+        requires2FA: true,
+        message: 'Invalid 2FA verification code' 
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('2FA verification error:', error);
+    res.status(500).json({ message: 'Error during 2FA verification' });
+  }
+};
+
 // Update user profile
 router.put('/', auth, [
   body('name').optional().isLength({ min: 2, max: 50 }).withMessage('Name must be between 2 and 50 characters'),
@@ -59,7 +106,7 @@ router.put('/', auth, [
   body('profile.location').optional().isLength({ max: 100 }).withMessage('Location must be less than 100 characters'),
   body('profile.preferences.temperatureUnit').optional().isIn(['celsius', 'fahrenheit']).withMessage('Invalid temperature unit'),
   body('profile.preferences.notifications').optional().isBoolean().withMessage('Notifications must be a boolean')
-], async (req, res) => {
+], require2FA, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -71,7 +118,7 @@ router.put('/', auth, [
     if (req.body.name) updateFields.name = req.body.name;
     if (req.body.phone) updateFields.phone = req.body.phone;
     if (req.body.profile) {
-      updateFields.profile = { ...req.user.profile, ...req.body.profile };
+      updateFields.profile = { ...req.currentUser.profile, ...req.body.profile };
     }
 
     const user = await User.findByIdAndUpdate(
@@ -88,7 +135,7 @@ router.put('/', auth, [
 });
 
 // Upload avatar
-router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
+router.post('/avatar', auth, upload.single('avatar'), require2FA, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
@@ -122,7 +169,7 @@ router.post('/avatar', auth, upload.single('avatar'), async (req, res) => {
 });
 
 // Change password
-router.put('/password', auth, [
+router.put('/password', auth, require2FA, [
   body('currentPassword').notEmpty().withMessage('Current password is required'),
   body('newPassword').isLength({ min: 6 }).withMessage('New password must be at least 6 characters long')
 ], async (req, res) => {
